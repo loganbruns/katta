@@ -38,6 +38,7 @@ public class HitsMapWritable implements Writable {
   private String _nodeName;
   private int _totalHits;
   private WritableType[] _sortFieldTypes;
+  private FacetResultNodeWritable[] _facetResults;
 
   private List<Hit> _hits;
   private Set<String> _shards;
@@ -103,6 +104,15 @@ public class HitsMapWritable implements Writable {
       }
     }
 
+    final int facetCount = in.readInt();
+    if (facetCount > 0) {
+      _facetResults = new FacetResultNodeWritable[facetCount];
+      for (int i = 0; i < facetCount; ++i) {
+        _facetResults[i] = new FacetResultNodeWritable();
+        _facetResults[i].readFields(in);
+      }
+    }
+
     if (LOG.isDebugEnabled()) {
       final long end = System.currentTimeMillis();
       LOG.debug("HitsMap reading of " + hitCount + " entries took " + (end - start) / 1000.0 + "sec.");
@@ -148,6 +158,12 @@ public class HitsMapWritable implements Writable {
         }
       }
     }
+    if (_facetResults != null) {
+      out.writeInt(_facetResults.length);
+      for (int i = 0; i < _facetResults.length; ++i)
+        _facetResults[i].write(out);
+    } else
+      out.writeInt(0);
     if (LOG.isDebugEnabled()) {
       final long end = System.currentTimeMillis();
       LOG.debug("HitsMap writing took " + (end - start) / 1000.0 + "sec.");
@@ -206,6 +222,14 @@ public class HitsMapWritable implements Writable {
 
   public void setSortFieldTypes(WritableType[] sortFieldTypes) {
     _sortFieldTypes = sortFieldTypes;
+  }
+
+  public FacetResultNodeWritable[] getFacetResults() {
+    return _facetResults;
+  }
+
+  public void setFacetResults(FacetResultNodeWritable[] facetResults) {
+    _facetResults = facetResults;
   }
 
 }

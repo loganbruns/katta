@@ -100,6 +100,24 @@ public interface ILuceneServer extends VersionedProtocol {
   public HitsMapWritable search(QueryWritable query, DocumentFrequencyWritable freqs, String[] shardNames, long timeout, int count,
       SortWritable sort, FilterWritable filter) throws IOException;
 
+  /**
+   * Faceted search which sorts the returned hits based on the sort parameter.
+   *
+   * @param query         The query to run.
+   * @param freqs         Term frequency information for term weighting.
+   * @param shardNames    A array of shard names to search in.
+   * @param timeout       How long the query is allowed to run before getting interrupted
+   * @param count         The top n high score hits.
+   * @param sort          sort criteria for returned hits
+   * @param filter        A query filter.
+   * @param facetCategories A list of facet category paths to count.
+   * @param facetCount    The number of facet values that facet counting should return.
+   * @return A list of hits from the search.
+   * @throws IOException     If the search had a problem reading files.
+   */
+  public HitsMapWritable search(QueryWritable query, DocumentFrequencyWritable freqs, String[] shardNames, long timeout, int count,
+                                SortWritable sort, FilterWritable filter, CategoryPathWritable[] facetCategories, int facetCount) throws IOException;
+
 
   /**
    * Returns the number of documents a term occurs in. In a distributed search

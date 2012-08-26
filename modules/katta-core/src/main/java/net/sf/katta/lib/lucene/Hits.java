@@ -29,6 +29,7 @@ import net.sf.katta.util.MergeSort;
 import net.sf.katta.util.WritableType;
 
 import org.apache.hadoop.io.Writable;
+import org.apache.lucene.facet.search.results.FacetResultNode;
 import org.apache.lucene.search.Sort;
 
 public class Hits implements Writable {
@@ -42,6 +43,8 @@ public class Hits implements Writable {
   private AtomicInteger _totalHits = new AtomicInteger();
   
   private Set<String> _missingShards = Collections.emptySet();
+
+  private List<FacetResultNode> _facetResults = new ArrayList<FacetResultNode>();
 
   public List<Hit> getHits() {
     if (_sortedList == null) {
@@ -218,5 +221,13 @@ public Set<String> getMissingShards() {
 public void setMissingShards(Set<String> _missingShards) {
 	this._missingShards = _missingShards;
 }
+
+  public List<FacetResultNode> getFacetResults() {
+    return _facetResults;
+  }
+  
+  public void addFacetResult(FacetResultNode facetResult) {
+    _facetResults.add(facetResult);
+  }
   
 }

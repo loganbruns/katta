@@ -53,6 +53,8 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.FieldSelector;
 import org.apache.lucene.document.Fieldable;
 import org.apache.lucene.document.MapFieldSelector;
+import org.apache.lucene.facet.search.results.MutableFacetResultNode;
+import org.apache.lucene.facet.taxonomy.CategoryPath;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.CachingWrapperFilter;
@@ -290,24 +292,30 @@ public class LuceneServer implements IContentServer, ILuceneServer {
   @Override
   public HitsMapWritable search(final QueryWritable query, final DocumentFrequencyWritable freqs,
           final String[] shards, final long timeout, final int count) throws IOException {
-    return search(query, freqs, shards, timeout, count, null, null);
+    return search(query, freqs, shards, timeout, count, null, null, null, 0);
   }
 
   @Override
   public HitsMapWritable search(QueryWritable query, DocumentFrequencyWritable freqs, String[] shards,
           final long timeout, int count, SortWritable sortWritable) throws IOException {
-    return search(query, freqs, shards, timeout, count, sortWritable, null);
+    return search(query, freqs, shards, timeout, count, sortWritable, null, null, 0);
   }
 
   @Override
   public HitsMapWritable search(QueryWritable query, DocumentFrequencyWritable freqs, String[] shards,
           final long timeout, int count, FilterWritable filterWritable) throws IOException {
-    return search(query, freqs, shards, timeout, count, null, filterWritable);
+    return search(query, freqs, shards, timeout, count, null, filterWritable, null, 0);
   }
 
   @Override
   public HitsMapWritable search(QueryWritable query, DocumentFrequencyWritable freqs, String[] shards,
           final long timeout, int count, SortWritable sortWritable, FilterWritable filterWritable) throws IOException {
+    return search(query, freqs, shards, timeout, count, sortWritable, filterWritable, null, 0);
+  }
+
+  @Override
+  public HitsMapWritable search(QueryWritable query, DocumentFrequencyWritable freqs, String[] shards,
+          final long timeout, int count, SortWritable sortWritable, FilterWritable filterWritable, CategoryPathWritable[] facetCategories, int facetCount) throws IOException {
     if (LOG.isDebugEnabled()) {
       LOG.debug("You are searching with the query: '" + query.getQuery() + "'");
     }
@@ -341,6 +349,19 @@ public class LuceneServer implements IContentServer, ILuceneServer {
       filter = cachedFilter;
     }
     search(luceneQuery, freqs, shards, result, count, sort, timeout, filter);
+
+    //DEBUG: temporarily return fake facets to test plumbing
+    if (facetCategories != null) {
+      int l = facetCategories.length;
+      FacetResultNodeWritable[] facetResults = new FacetResultNodeWritable[l];
+      for (int i=0; i<l; ++i) {
+        CategoryPath facet = facetCategories[i].getCategoryPath();
+        facet.add(_nodeName);
+        facetResults[i] = new FacetResultNodeWritable(new MutableFacetResultNode(0, 1.0, 0.0, facet, null));
+      }
+      result.setFacetResults(facetResults);
+    }
+    
     if (LOG.isDebugEnabled()) {
       final long end = System.currentTimeMillis();
       LOG.debug("Search took " + (end - start) / 1000.0 + "sec.");
