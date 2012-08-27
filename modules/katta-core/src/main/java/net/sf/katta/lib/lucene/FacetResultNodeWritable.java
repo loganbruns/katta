@@ -27,7 +27,7 @@ import org.apache.hadoop.io.Writable;
 import org.apache.lucene.facet.search.results.FacetResultNode;
 import org.apache.lucene.facet.search.results.MutableFacetResultNode;
 
-public class FacetResultNodeWritable implements Writable {
+public class FacetResultNodeWritable implements Comparable, Writable {
 
   private FacetResultNode _facetResultNode;
 
@@ -74,6 +74,21 @@ public class FacetResultNodeWritable implements Writable {
     }
     FacetResultNode other = ((FacetResultNodeWritable) obj).getFacetResultNode();
     return _facetResultNode.equals(other);
+  }
+
+  @Override
+  public int compareTo(Object obj) {
+    if (getClass() != obj.getClass())
+      throw new ClassCastException();
+
+    // Sort by facet name then value descending
+
+    FacetResultNode other = ((FacetResultNodeWritable) obj).getFacetResultNode();
+    int cmp = _facetResultNode.getLabel().getComponent(0).compareTo(other.getLabel().getComponent(0));
+    if (cmp != 0)
+      return cmp;
+
+    return (int) (other.getValue() - _facetResultNode.getValue());
   }
 
   @Override
