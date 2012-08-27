@@ -169,7 +169,7 @@ public class LuceneClient implements ILuceneClient {
     if (facetCategories != null) {
       results = _kattaClient.broadcastToIndices(_timeout, true, FACETED_FILTERED_SORTED_SEARCH_METHOD,
               SEARCH_METHOD_SHARD_ARG_IDX, indexNames, new QueryWritable(query), docFreqs, null, _timeout,
-                                                Integer.valueOf(count), sort != null ? new SortWritable(sort) : null, filter != null ? new FilterWritable(filter) : null, CategoryPathWritable.toArray(facetCategories), Integer.valueOf(facetCount));
+                                                Integer.valueOf(count), sort != null ? new SortWritable(sort) : null, filter != null ? new FilterWritable(filter) : null, CategoryPathWritable.fromArray(facetCategories), Integer.valueOf(facetCount));
     } else if (sort == null && filter == null) {
       results = _kattaClient.broadcastToIndices(_timeout, true, SEARCH_METHOD, SEARCH_METHOD_SHARD_ARG_IDX, indexNames,
               new QueryWritable(query), docFreqs, null, _timeout, Integer.valueOf(count));

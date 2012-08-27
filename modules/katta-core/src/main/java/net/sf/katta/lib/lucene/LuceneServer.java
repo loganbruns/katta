@@ -53,8 +53,16 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.FieldSelector;
 import org.apache.lucene.document.Fieldable;
 import org.apache.lucene.document.MapFieldSelector;
+import org.apache.lucene.facet.index.params.DefaultFacetIndexingParams;
+import org.apache.lucene.facet.search.FacetsCollector;
+import org.apache.lucene.facet.search.params.CountFacetRequest;
+import org.apache.lucene.facet.search.params.FacetSearchParams;
+import org.apache.lucene.facet.search.results.FacetResult;
+import org.apache.lucene.facet.search.results.FacetResultNode;
 import org.apache.lucene.facet.search.results.MutableFacetResultNode;
 import org.apache.lucene.facet.taxonomy.CategoryPath;
+import org.apache.lucene.facet.taxonomy.TaxonomyReader;
+import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.CachingWrapperFilter;
@@ -64,6 +72,7 @@ import org.apache.lucene.search.Explanation;
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.MultiCollector;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.Searcher;
@@ -77,6 +86,7 @@ import org.apache.lucene.search.TopFieldCollector;
 import org.apache.lucene.search.TopFieldDocs;
 import org.apache.lucene.search.TopScoreDocCollector;
 import org.apache.lucene.search.Weight;
+import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.PriorityQueue;
 
@@ -184,7 +194,14 @@ public class LuceneServer implements IContentServer, ILuceneServer {
     LOG.info("LuceneServer " + _nodeName + " got shard " + shardName);
     try {
       IndexSearcher indexSearcher = _seacherFactory.createSearcher(shardName, shardDir);
-      _searcherHandlesByShard.put(shardName, new SearcherHandle(indexSearcher));
+      TaxonomyReader taxonomy = null;
+      File taxonomyDir = new File(shardDir.getCanonicalPath() + ".taxo");
+      if (taxonomyDir.exists()) {
+        taxonomy = new DirectoryTaxonomyReader(FSDirectory.open(taxonomyDir));
+        LOG.info("LuceneServer " + _nodeName + " got shard taxonomy " + shardName);
+      }
+      _searcherHandlesByShard.put(shardName,
+                                  new SearcherHandle(indexSearcher, taxonomy));
     } catch (CorruptIndexException e) {
       LOG.error("Error building index for shard " + shardName, e);
       throw e;
@@ -348,20 +365,18 @@ public class LuceneServer implements IContentServer, ILuceneServer {
       }
       filter = cachedFilter;
     }
-    search(luceneQuery, freqs, shards, result, count, sort, timeout, filter);
+    search(luceneQuery,
+           freqs,
+           shards,
+           result,
+           count,
+           sort,
+           timeout,
+           filter,
+           facetCategories != null ?
+           CategoryPathWritable.toArray(facetCategories) : null,
+           facetCount);
 
-    //DEBUG: temporarily return fake facets to test plumbing
-    if (facetCategories != null) {
-      int l = facetCategories.length;
-      FacetResultNodeWritable[] facetResults = new FacetResultNodeWritable[l];
-      for (int i=0; i<l; ++i) {
-        CategoryPath facet = facetCategories[i].getCategoryPath();
-        facet.add(_nodeName);
-        facetResults[i] = new FacetResultNodeWritable(new MutableFacetResultNode(0, 1.0, 0.0, facet, null));
-      }
-      result.setFacetResults(facetResults);
-    }
-    
     if (LOG.isDebugEnabled()) {
       final long end = System.currentTimeMillis();
       LOG.debug("Search took " + (end - start) / 1000.0 + "sec.");
@@ -451,7 +466,7 @@ public class LuceneServer implements IContentServer, ILuceneServer {
    * @throws IOException
    */
   protected final void search(final Query query, final DocumentFrequencyWritable freqs, final String[] shards,
-          final HitsMapWritable result, final int max, Sort sort, long timeout, Filter filter) throws IOException {
+                              final HitsMapWritable result, final int max, Sort sort, long timeout, Filter filter, CategoryPath[] facetCategories, int facetCount) throws IOException {
     timeout = getCollectorTiemout(timeout);
     final Query rewrittenQuery = rewrite(query, shards);
     final int numDocs = freqs.getNumDocsAsInteger();
@@ -464,11 +479,13 @@ public class LuceneServer implements IContentServer, ILuceneServer {
     CompletionService<SearchResult> csSearch = new ExecutorCompletionService<SearchResult>(_threadPool);
 
     for (int i = 0; i < shardsCount; i++) {
-      SearchCall call = new SearchCall(shards[i], weight, max, sort, timeout, i, filter);
+      SearchCall call = new SearchCall(shards[i], weight, max, sort, timeout, i, filter, facetCategories, facetCount);
       csSearch.submit(call);
     }
 
     final ScoreDoc[][] scoreDocs = new ScoreDoc[shardsCount][];
+    final List<FacetResult> facetResults =
+			facetCategories != null ? new ArrayList<FacetResult>() : null;
     ScoreDoc scoreDocExample = null;
     for (int i = 0; i < shardsCount; i++) {
       try {
@@ -480,6 +497,8 @@ public class LuceneServer implements IContentServer, ILuceneServer {
         if (scoreDocExample == null && scoreDocs[callIndex].length > 0) {
           scoreDocExample = scoreDocs[callIndex][0];
         }
+        if (searchResult._facets != null)
+          facetResults.addAll(searchResult._facets);
       } catch (InterruptedException e) {
         throw new IOException("Multithread shard search interrupted:", e);
       } catch (ExecutionException e) {
@@ -540,6 +559,31 @@ public class LuceneServer implements IContentServer, ILuceneServer {
       if (hit != null) {
         result.addHit(hit);
       }
+    }
+
+    if (facetResults != null) {
+      HashMap<CategoryPath,MutableFacetResultNode> facets =
+				new HashMap<CategoryPath,MutableFacetResultNode>();
+
+      for (FacetResult facetResult : facetResults) {
+        for (FacetResultNode facet : 
+						 facetResult.getFacetResultNode().getSubResults()) {
+          CategoryPath label = facet.getLabel();
+          MutableFacetResultNode existing = facets.get(label);
+          if (existing != null) {
+            existing.setValue(existing.getValue() + facet.getValue());
+            existing.setResidue(existing.getResidue() + facet.getResidue());
+          } else
+            facets.put(label, (MutableFacetResultNode) facet);
+        }
+      }
+
+      int l = facets.values().size();
+      FacetResultNodeWritable[] mergedFacets = new FacetResultNodeWritable[l];
+      for (MutableFacetResultNode facet : facets.values())
+        mergedFacets[--l] = new FacetResultNodeWritable(facet);
+
+      result.setFacetResults(mergedFacets);
     }
   }
 
@@ -654,8 +698,10 @@ public class LuceneServer implements IContentServer, ILuceneServer {
     protected final long _timeout;
     protected final int _callIndex;
     protected final Filter _filter;
+    protected final CategoryPath[] _facetCategories;
+    protected final int _facetCount;
 
-    public SearchCall(String shardName, Weight weight, int limit, Sort sort, long timeout, int callIndex, Filter filter) {
+    public SearchCall(String shardName, Weight weight, int limit, Sort sort, long timeout, int callIndex, Filter filter, CategoryPath[] facetCategories, int facetCount) {
       _shardName = shardName;
       _weight = weight;
       _limit = limit;
@@ -663,6 +709,8 @@ public class LuceneServer implements IContentServer, ILuceneServer {
       _timeout = timeout;
       _callIndex = callIndex;
       _filter = filter;
+      _facetCategories = facetCategories;
+      _facetCount = facetCount;
     }
 
     @Override
@@ -676,7 +724,7 @@ public class LuceneServer implements IContentServer, ILuceneServer {
           LOG.warn(String.format("Search attempt for shard %s skipped because shard was closed; empty result returned",
                   _shardName));
           // return empty result...
-          return new SearchResult(0, new ScoreDoc[0], _callIndex);
+          return new SearchResult(0, new ScoreDoc[0], null, _callIndex);
         }
 
         int nDocs = Math.min(_limit, searcher.maxDoc());
@@ -684,34 +732,59 @@ public class LuceneServer implements IContentServer, ILuceneServer {
         // empty index (or result limit <= 0); return empty results (as the
         // collectors will fail if nDocs <= 0)
         if (nDocs <= 0) {
-          return new SearchResult(0, new ScoreDoc[0], _callIndex);
+          return new SearchResult(0, new ScoreDoc[0], null, _callIndex);
         }
 
-        TopDocsCollector resultCollector;
+        TopDocsCollector hitCollector;
         if (_sort != null) {
           boolean fillFields = true;// see IndexSearcher#search(...)
           boolean fieldSortDoTrackScores = false;
           boolean fieldSortDoMaxScore = false;
-          resultCollector = TopFieldCollector.create(_sort, nDocs, fillFields, fieldSortDoTrackScores,
+          hitCollector = TopFieldCollector.create(_sort, nDocs, fillFields, fieldSortDoTrackScores,
                   fieldSortDoMaxScore, !_weight.scoresDocsOutOfOrder());
         } else {
-          resultCollector = TopScoreDocCollector.create(nDocs, !_weight.scoresDocsOutOfOrder());
+          hitCollector = TopScoreDocCollector.create(nDocs, !_weight.scoresDocsOutOfOrder());
         }
+
+        Collector collector = hitCollector;
+        FacetsCollector facetCollector = null;
+        
+        if (_facetCategories != null) {
+          TaxonomyReader taxonomy = handle.getTaxonomyReader();
+          if (taxonomy != null) {
+            FacetSearchParams facetParams =
+							new FacetSearchParams(new DefaultFacetIndexingParams());
+
+            for (CategoryPath facet : _facetCategories)
+              facetParams.addFacetRequest(new CountFacetRequest(facet, _facetCount));
+
+            facetCollector =
+							new FacetsCollector(facetParams,
+                                  searcher.getIndexReader(),
+                                  taxonomy);
+
+            collector = MultiCollector.wrap(hitCollector, facetCollector);
+          } else
+            LOG.warn("facet count requested by no shard taxonomy loaded.");
+        }
+        
         try {
-          searcher.search(_weight, _filter, wrapInTimeoutCollector(resultCollector));
+          searcher.search(_weight, _filter, wrapInTimeoutCollector(collector));
         } catch (TimeExceededException e) {
           LOG.warn("encountered exceeded timout for query '" + _weight.getQuery() + " on shard '" + _shardName
                   + "' with timeout set to '" + _timeout + "'");
         }
-        TopDocs docs = resultCollector.topDocs();
-        return new SearchResult(docs.totalHits, docs.scoreDocs, _callIndex);
+        TopDocs docs = hitCollector.topDocs();
+        List<FacetResult> facets =
+					facetCollector != null ? facetCollector.getFacetResults() : null;
+        return new SearchResult(docs.totalHits, docs.scoreDocs, facets, _callIndex);
       } finally {
         handle.finishSearcher();
       }
     }
 
     @SuppressWarnings({ "rawtypes" })
-    private Collector wrapInTimeoutCollector(TopDocsCollector resultCollector) {
+    private Collector wrapInTimeoutCollector(Collector resultCollector) {
       if (_timeout <= 0) {
         return resultCollector;
       }
@@ -726,11 +799,16 @@ public class LuceneServer implements IContentServer, ILuceneServer {
 
     protected final int _totalHits;
     protected final ScoreDoc[] _scoreDocs;
+    protected final List<FacetResult> _facets;
     protected int _searchCallIndex;
 
-    public SearchResult(int totalHits, ScoreDoc[] scoreDocs, int searchCallIndex) {
+    public SearchResult(int totalHits,
+                        ScoreDoc[] scoreDocs,
+                        List<FacetResult> facets,
+                        int searchCallIndex) {
       _totalHits = totalHits;
       _scoreDocs = scoreDocs;
+      _facets = facets;
       _searchCallIndex = searchCallIndex;
     }
 
@@ -740,6 +818,10 @@ public class LuceneServer implements IContentServer, ILuceneServer {
 
     public ScoreDoc[] getScoreDocs() {
       return _scoreDocs;
+    }
+
+    public List<FacetResult> getFacetResults() {
+      return _facets;
     }
 
     public int getSearchCallIndex() {
@@ -897,11 +979,13 @@ public class LuceneServer implements IContentServer, ILuceneServer {
    */
   static class SearcherHandle {
     private volatile IndexSearcher _indexSearcher;
+    private volatile TaxonomyReader _taxonomyReader;
     private final Object _lock = new Object();
     private final AtomicInteger _refCount = new AtomicInteger(0);
 
-    public SearcherHandle(IndexSearcher indexSearcher) {
+    public SearcherHandle(IndexSearcher indexSearcher, TaxonomyReader taxonomy) {
       _indexSearcher = indexSearcher;
+      _taxonomyReader = taxonomy;
     }
 
     /**
@@ -918,6 +1002,15 @@ public class LuceneServer implements IContentServer, ILuceneServer {
         _refCount.incrementAndGet();
       }
       return _indexSearcher;
+    }
+
+    /**
+     * Returns the TaxonomyReader or null if there is none.
+     * 
+     * @return the taxonomy
+     */
+    public TaxonomyReader getTaxonomyReader() {
+      return _taxonomyReader;
     }
 
     /**

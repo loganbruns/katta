@@ -81,11 +81,20 @@ public class CategoryPathWritable implements Writable {
     return _categoryPath != null ? _categoryPath.toString() : "null";
   }
 
-  public static CategoryPathWritable[] toArray(CategoryPath[] categoryPaths) {
+  public static CategoryPathWritable[] fromArray(CategoryPath[] categoryPaths) {
     int l = categoryPaths.length;
     CategoryPathWritable[] paths = new CategoryPathWritable[l];
     for (int i=0; i<l; ++i)
       paths[i] = new CategoryPathWritable(categoryPaths[i]);
+
+    return paths;
+  }
+
+  public static CategoryPath[] toArray(CategoryPathWritable[] categoryPaths) {
+    int l = categoryPaths.length;
+    CategoryPath[] paths = new CategoryPath[l];
+    for (int i=0; i<l; ++i)
+      paths[i] = categoryPaths[i].getCategoryPath();
 
     return paths;
   }
