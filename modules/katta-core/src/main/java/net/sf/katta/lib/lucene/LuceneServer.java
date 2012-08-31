@@ -495,7 +495,14 @@ public class LuceneServer implements IContentServer, ILuceneServer {
         totalHits += searchResult._totalHits;
         scoreDocs[callIndex] = searchResult._scoreDocs;
         if (scoreDocExample == null && scoreDocs[callIndex].length > 0) {
-          scoreDocExample = scoreDocs[callIndex][0];
+          if (sort == null)
+            scoreDocExample = scoreDocs[callIndex][0];
+          else
+            for (int j=0; j<scoreDocs[callIndex].length; ++j)
+              if (((FieldDoc)scoreDocs[callIndex][j]).fields != null) {
+                scoreDocExample = scoreDocs[callIndex][j];
+                break;
+              }
         }
         if (searchResult._facets != null)
           facetResults.addAll(searchResult._facets);
@@ -512,7 +519,7 @@ public class LuceneServer implements IContentServer, ILuceneServer {
     // Limit the request to the number requested or the total number of
     // documents, whichever is smaller.
     int limit = Math.min(numDocs, max);
-    if (sort == null || totalHits == 0) {
+    if ((sort == null || (((FieldDoc) scoreDocExample).fields == null)) || totalHits == 0) {
       final KattaHitQueue hq = new KattaHitQueue(limit);
       int pos = 0;
       BitSet done = new BitSet(shardsCount);
