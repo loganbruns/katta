@@ -17,9 +17,11 @@ package net.sf.katta.lib.lucene;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.concurrent.Executors;
 
 import net.sf.katta.util.NodeConfiguration;
 
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.store.FSDirectory;
 
@@ -32,7 +34,8 @@ public class DefaultSearcherFactory implements ISeacherFactory {
 
   @Override
   public IndexSearcher createSearcher(String shardName, File shardDir) throws IOException {
-    return new IndexSearcher(FSDirectory.open(shardDir.getAbsoluteFile()));
+    IndexReader reader = IndexReader.open(FSDirectory.open(shardDir.getAbsoluteFile()));
+    return new IndexSearcher(reader, Executors.newCachedThreadPool());
   }
 
 }
