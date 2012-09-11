@@ -83,7 +83,7 @@ public enum WritableType {
   public WritableComparable convertComparable(Object comparable) {
     switch (this) {
     case TEXT:
-      return new Text((String) comparable);
+      return new Text(comparable != null ? (String) comparable : "");
     case BYTE:
       return new ByteWritable(((Byte) comparable).byteValue());
     case INT:
