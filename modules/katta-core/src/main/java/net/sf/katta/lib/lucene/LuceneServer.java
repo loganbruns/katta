@@ -519,7 +519,7 @@ public class LuceneServer implements IContentServer, ILuceneServer {
     // Limit the request to the number requested or the total number of
     // documents, whichever is smaller.
     int limit = Math.min(numDocs, max);
-    if ((sort == null || (((FieldDoc) scoreDocExample).fields == null)) || totalHits == 0) {
+    if ((sort == null || (scoreDocExample == null) || (((FieldDoc) scoreDocExample).fields == null)) || totalHits == 0) {
       final KattaHitQueue hq = new KattaHitQueue(limit);
       int pos = 0;
       BitSet done = new BitSet(shardsCount);
