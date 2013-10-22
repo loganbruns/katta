@@ -18,6 +18,8 @@ package net.sf.katta.lib.lucene;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -35,6 +37,9 @@ import net.sf.katta.util.ZkConfiguration;
 
 import org.apache.hadoop.io.MapWritable;
 import org.apache.log4j.Logger;
+import org.apache.lucene.facet.search.results.FacetResultNode;
+import org.apache.lucene.facet.search.results.MutableFacetResultNode;
+import org.apache.lucene.facet.taxonomy.CategoryPath;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Sort;
@@ -105,6 +110,7 @@ public class LuceneClient implements ILuceneClient {
   private static final Method SORTED_SEARCH_METHOD;
   private static final Method FILTERED_SEARCH_METHOD;
   private static final Method FILTERED_SORTED_SEARCH_METHOD;
+  private static final Method FACETED_FILTERED_SORTED_SEARCH_METHOD;
   private static final int SEARCH_METHOD_SHARD_ARG_IDX = 2;
   static {
     try {
@@ -132,26 +138,43 @@ public class LuceneClient implements ILuceneClient {
     } catch (NoSuchMethodException e) {
       throw new RuntimeException("Could not find method search() in ILuceneSearch!");
     }
+    try {
+      FACETED_FILTERED_SORTED_SEARCH_METHOD = ILuceneServer.class.getMethod("search", new Class[] { QueryWritable.class,
+              DocumentFrequencyWritable.class, String[].class, Long.TYPE, Integer.TYPE, SortWritable.class,
+                                                                                                    FilterWritable.class, CategoryPathWritable[].class, Integer.TYPE });
+    } catch (NoSuchMethodException e) {
+      throw new RuntimeException("Could not find method search() in ILuceneSearch!");
+    }
   }
 
   @Override
   public Hits search(final Query query, final String[] indexNames, final int count) throws KattaException {
-    return search(query, indexNames, count, null, null);
+    return search(query, indexNames, count, null, null, null, 0);
   }
 
   @Override
   public Hits search(final Query query, final String[] indexNames, final int count, final Sort sort)
           throws KattaException {
-    return search(query, indexNames, count, sort, null);
+    return search(query, indexNames, count, sort, null, null, 0);
   }
 
   @Override
   public Hits search(final Query query, final String[] indexNames, final int count, final Sort sort, final Filter filter)
           throws KattaException {
+    return search(query, indexNames, count, sort, filter, null, 0);
+  }
+
+  @Override
+  public Hits search(final Query query, final String[] indexNames, final int count, final Sort sort, final Filter filter, final CategoryPath[] facetCategories, int facetCount)
+          throws KattaException {
     final DocumentFrequencyWritable docFreqs = getDocFrequencies(query, indexNames);
     ClientResult<HitsMapWritable> results;
 
-    if (sort == null && filter == null) {
+    if (facetCategories != null) {
+      results = _kattaClient.broadcastToIndices(_timeout, true, FACETED_FILTERED_SORTED_SEARCH_METHOD,
+              SEARCH_METHOD_SHARD_ARG_IDX, indexNames, new QueryWritable(query), docFreqs, null, _timeout,
+                                                Integer.valueOf(count), sort != null ? new SortWritable(sort) : null, filter != null ? new FilterWritable(filter) : null, CategoryPathWritable.fromArray(facetCategories), Integer.valueOf(facetCount));
+    } else if (sort == null && filter == null) {
       results = _kattaClient.broadcastToIndices(_timeout, true, SEARCH_METHOD, SEARCH_METHOD_SHARD_ARG_IDX, indexNames,
               new QueryWritable(query), docFreqs, null, _timeout, Integer.valueOf(count));
     } else if (sort != null && filter == null) {
@@ -177,6 +200,11 @@ public class LuceneClient implements ILuceneClient {
               + results.getShardCoverage());
       result.setMissingShards(results.getMissingShards());
     }
+    HashMap<CategoryPath,FacetResultNodeWritable> facets;
+    if (facetCategories != null)
+      facets = new HashMap<CategoryPath,FacetResultNodeWritable>();
+    else
+      facets = null;
     for (HitsMapWritable hmw : results.getResults()) {
       List<Hit> hits = hmw.getHitList();
       if (exampleHitWritable == null && !hits.isEmpty()) {
@@ -184,7 +212,34 @@ public class LuceneClient implements ILuceneClient {
       }
       result.addTotalHits(hmw.getTotalHits());
       result.addHits(hits);
+      FacetResultNodeWritable[] facetResults = hmw.getFacetResults();
+      if (facetResults != null)
+        for (FacetResultNodeWritable facetResult : facetResults) {
+          FacetResultNode facet = facetResult.getFacetResultNode();
+          CategoryPath label = facet.getLabel();
+          FacetResultNodeWritable existingWritable = facets.get(label);
+          if (existingWritable != null) {
+            MutableFacetResultNode existing =
+							(MutableFacetResultNode) existingWritable.getFacetResultNode();
+            existing.setValue(existing.getValue() + facet.getValue());
+            existing.setResidue(existing.getResidue() + facet.getResidue());
+          } else
+            facets.put(label, facetResult);
+        }
     }
+
+    if (facets != null) {
+      ArrayList<FacetResultNodeWritable> mergedFacets =
+				new ArrayList<FacetResultNodeWritable>();
+
+      mergedFacets.addAll(facets.values());
+
+      Collections.sort(mergedFacets);
+
+      for (FacetResultNodeWritable facet : mergedFacets)
+        result.addFacetResult(facet.getFacetResultNode());
+    }
+          
     long start = 0;
     if (LOG.isDebugEnabled()) {
       start = System.currentTimeMillis();

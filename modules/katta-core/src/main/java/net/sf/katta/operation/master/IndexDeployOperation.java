@@ -135,7 +135,8 @@ public class IndexDeployOperation extends AbstractIndexOperation {
       });
       for (final FileStatus fileStatus : listStatus) {
         String shardPath = fileStatus.getPath().toString();
-        if (fileStatus.isDir() || shardPath.endsWith(".zip")) {
+        if ((fileStatus.isDir() || shardPath.endsWith(".zip")) &&
+            !shardPath.endsWith(".taxo")) {
           shards.add(new Shard(createShardName(indexName, shardPath), shardPath));
         }
       }

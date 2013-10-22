@@ -19,7 +19,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 
@@ -68,6 +68,7 @@ public class ShardManager {
       return localShardFolder;
     } catch (Exception e) {
       FileUtil.deleteFolder(localShardFolder);
+      FileUtil.deleteFolder(new File(localShardFolder.getAbsolutePath() + ".taxo"));
       throw e;
     }
   }
@@ -75,6 +76,7 @@ public class ShardManager {
   public void uninstallShard(String shardName) {
     File localShardFolder = getShardFolder(shardName);
     FileUtil.deleteFolder(localShardFolder);
+    FileUtil.deleteFolder(new File(localShardFolder.getAbsolutePath() + ".taxo"));
   }
 
   public Collection<String> getInstalledShards() {
@@ -82,7 +84,11 @@ public class ShardManager {
     if (folderList == null) {
       return Collections.EMPTY_LIST;
     }
-    return Arrays.asList(folderList);
+    ArrayList<String> shardsOnly = new ArrayList<String>();
+    for (String folder : folderList)
+      if (!folder.endsWith(".taxo"))
+        shardsOnly.add(folder);
+    return shardsOnly;
   }
 
   public File getShardsFolder() {
@@ -113,9 +119,23 @@ public class ShardManager {
           fileSystem = new ThrottledFileSystem(fileSystem, _throttleSemaphore);
         }
         final Path path = new Path(shardPath);
+        final Path taxonomyPath = new Path(shardPath + ".taxo");
         boolean isZip = fileSystem.isFile(path) && shardPath.endsWith(".zip");
 
         File shardTmpFolder = new File(localShardFolder.getAbsolutePath() + "_tmp");
+
+        File taxonomyLocalFolder;
+        File taxonomyTmpFolder;
+        if (fileSystem.exists(taxonomyPath)) {
+          taxonomyLocalFolder =
+						new File(localShardFolder.getAbsolutePath() + ".taxo");
+          taxonomyTmpFolder =
+						new File(taxonomyLocalFolder.getAbsolutePath() + "_tmp");
+        } else {
+          taxonomyLocalFolder = null;
+          taxonomyTmpFolder = null;
+        }
+        
         try {
           FileUtil.deleteFolder(localShardFolder);
           FileUtil.deleteFolder(shardTmpFolder);
@@ -127,9 +147,19 @@ public class ShardManager {
             fileSystem.copyToLocalFile(path, new Path(shardTmpFolder.getAbsolutePath()));
           }
           shardTmpFolder.renameTo(localShardFolder);
+
+          if (taxonomyLocalFolder != null) {
+            FileUtil.deleteFolder(taxonomyLocalFolder);
+            FileUtil.deleteFolder(taxonomyTmpFolder);
+            fileSystem.copyToLocalFile(taxonomyPath, new Path(taxonomyTmpFolder.getAbsolutePath()));
+            taxonomyTmpFolder.renameTo(taxonomyLocalFolder);
+          }
         } finally {
           // Ensure that the tmp folder is deleted on an error
           FileUtil.deleteFolder(shardTmpFolder);
+          if (taxonomyLocalFolder != null) {
+            FileUtil.deleteFolder(taxonomyTmpFolder);
+          }
         }
         // Looks like we were successful.
         if (i > 0) {

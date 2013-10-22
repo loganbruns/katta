@@ -53,7 +53,7 @@ public enum WritableType {
   public static WritableType[] detectWritableTypes(Object[] comparables) {
     WritableType[] writablTypes = new WritableType[comparables.length];
     for (int i = 0; i < comparables.length; i++) {
-      writablTypes[i] = detectWritableType(comparables[i]);
+      writablTypes[i] = comparables[i] != null ? detectWritableType(comparables[i]) : WritableType.TEXT;
     }
     return writablTypes;
   }
@@ -83,7 +83,7 @@ public enum WritableType {
   public WritableComparable convertComparable(Object comparable) {
     switch (this) {
     case TEXT:
-      return new Text((String) comparable);
+      return new Text(comparable != null ? (String) comparable : "");
     case BYTE:
       return new ByteWritable(((Byte) comparable).byteValue());
     case INT:
